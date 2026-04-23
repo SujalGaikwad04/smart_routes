@@ -2,13 +2,15 @@
 dynamic_routing.py
 OSRM-based dynamic routing engine.
 
-Generates 50 unique routes between any two coordinates by:
+Generates unique road-snapped routes between any two coordinates by:
   1. Firing a base OSRM request (up to 3 alternatives)
   2. Generating strategic via-point perturbations (max ~10 API calls total)
-  3. Deduplicating truly identical routes (>95% overlap)
-  4. Padding remaining slots with geometry-blended synthetic variants
-     — no extra API calls, routes always start at source / end at dest
+  3. Deduplicating truly identical routes (>92% overlap)
+  4. Filtering outliers (>1.6× shortest route)
   5. Optionally injecting priority stop waypoints into OSRM requests
+
+All returned routes follow real roads — no synthetic geometry padding.
+This guarantees routes never cut through buildings, water, or off-road areas.
 
 Cache: 5-minute TTL per (source, destination, priority_stops) tuple.
 """
@@ -31,10 +33,10 @@ CACHE_TTL = 300  # 5 minutes
 OSRM_BASE = "https://router.project-osrm.org/route/v1/driving"
 
 # Keep API calls low to avoid public OSRM rate-limiting
-OSRM_BATCH_SIZE  = 3     # parallel requests per batch
-OSRM_BATCH_DELAY = 0.35  # seconds between batches
-OSRM_TIMEOUT     = 15.0  # per-request timeout (seconds)
-OSRM_MAX_VIA_PTS = 8     # via-point variations → ~9 total OSRM calls
+OSRM_BATCH_SIZE  = 4     # parallel requests per batch
+OSRM_BATCH_DELAY = 0.4   # seconds between batches
+OSRM_TIMEOUT     = 18.0  # per-request timeout (seconds)
+OSRM_MAX_VIA_PTS = 12    # via-point variations → ~13 total OSRM calls
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,18 +51,18 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _build_osrm_url(waypoints: List[Tuple[float, float]]) -> str:
-    """Build OSRM URL from (lat, lon) tuples. Requests full geometry + alternatives."""
+    """Build OSRM URL from (lat, lon) tuples. Requests full geometry + up to 3 alternatives."""
     coords = ";".join(f"{lon},{lat}" for lat, lon in waypoints)
-    return f"{OSRM_BASE}/{coords}?alternatives=true&overview=full&geometries=geojson"
+    return f"{OSRM_BASE}/{coords}?alternatives=3&overview=full&geometries=geojson"
 
 
 def _generate_perturbation_waypoints(
-    slat: float, slon: float, dlat: float, dlon: float, num: int = 8
+    slat: float, slon: float, dlat: float, dlon: float, num: int = 12
 ) -> List[Tuple[float, float]]:
     """
-    Generate a small set of strategic via-points to push OSRM down
-    different road corridors. Kept intentionally small (num≤10) to
-    stay within the public OSRM rate limit.
+    Generate diverse via-points to push OSRM through different road corridors.
+    Uses large perpendicular offsets and multiple along-route fractions so that
+    each call is very likely to follow a different road.
     """
     mid_lat = (slat + dlat) / 2
     mid_lon = (slon + dlon) / 2
@@ -69,26 +71,26 @@ def _generate_perturbation_waypoints(
     dy = dlat - slat
     length = math.sqrt(dx * dx + dy * dy) or 1e-9
 
-    # Unit perpendicular vector
-    px = -dy / length
+    # Unit vectors
+    px = -dy / length   # perpendicular
     py = dx / length
-
-    # Unit along-axis vector
-    ax = dx / length
+    ax = dx / length    # along-axis
     ay = dy / length
 
     dist_deg = math.sqrt(dx * dx + dy * dy)
 
     waypoints: List[Tuple[float, float]] = []
 
-    # Perpendicular offsets at midpoint
-    for s in [-0.5, -0.25, 0.25, 0.5]:
-        waypoints.append((mid_lat + py * s * dist_deg,
-                          mid_lon + px * s * dist_deg))
+    # 1. Large perpendicular offsets at midpoint (force different corridors)
+    for s in [-0.8, -0.5, -0.25, 0.25, 0.5, 0.8]:
+        waypoints.append((
+            mid_lat + py * s * dist_deg,
+            mid_lon + px * s * dist_deg,
+        ))
 
-    # Along-axis offsets (1/3 and 2/3) with slight perpendicular nudge
-    for frac in [0.33, 0.66]:
-        for perp in [-0.2, 0.2]:
+    # 2. Along-axis fractions (1/4, 1/3, 1/2, 2/3, 3/4) with perpendicular nudges
+    for frac in [0.25, 0.40, 0.60, 0.75]:
+        for perp in [-0.35, 0.35]:
             wlat = slat + ay * frac * dist_deg + py * perp * dist_deg
             wlon = slon + ax * frac * dist_deg + px * perp * dist_deg
             waypoints.append((wlat, wlon))
@@ -161,11 +163,11 @@ def _overlap_ratio(s1: frozenset, s2: frozenset) -> float:
     return len(s1 & s2) / min(len(s1), len(s2))
 
 
-def deduplicate_routes(routes: List[Dict], threshold: float = 0.92) -> List[Dict]:
+def deduplicate_routes(routes: List[Dict], threshold: float = 0.72) -> List[Dict]:
     """
     Remove routes with >threshold coordinate overlap (keeps fastest duplicate).
-    Threshold 0.92 keeps genuinely different routes; tight enough to drop
-    near-identical OSRM responses.
+    Threshold 0.72 is loose enough to keep genuinely different urban routes
+    (which naturally share arterials) while dropping near-exact duplicates.
     """
     routes_sorted = sorted(routes, key=lambda x: x.get("duration", float("inf")))
     unique: List[Dict] = []
@@ -331,15 +333,18 @@ async def get_dynamic_routes(
     top_k: int = 50,
 ) -> List[Dict]:
     """
-    Return up to `top_k` unique routes from (slat,slon) to (dlat,dlon).
+    Return unique real road-snapped routes from (slat,slon) to (dlat,dlon).
 
     Strategy
     --------
-    1. Fire ~9 OSRM requests (1 base + 8 via-point variants) — max ~10 calls.
-    2. Deduplicate truly identical routes (>92% overlap).
-    3. Filter outliers (>1.6× shortest).
-    4. Sort by duration (best first) — real routes stay at the top.
-    5. Pad to top_k with smart geometric blends (0 extra API calls).
+    1. Fire ~13 OSRM requests (1 base + 12 via-point variants), each requesting
+       up to 3 alternatives → up to ~52 raw routes.
+    2. Deduplicate with threshold=0.72 (keeps urban routes sharing some roads).
+    3. Filter obvious outliers (>2.5× shortest distance).
+    4. Sort by duration (best first).
+
+    Only OSRM road-snapped routes are returned — no synthetic padding.
+    This ensures all rendered paths follow real roads exactly.
     """
     priority_coords = priority_coords or []
     cache_key = _make_cache_key(slat, slon, dlat, dlon, priority_coords)
@@ -364,26 +369,25 @@ async def get_dynamic_routes(
     if not raw:
         raise RuntimeError("OSRM returned no routes for the given coordinates.")
 
-    # Deduplicate
-    unique = deduplicate_routes(raw, threshold=0.92)
+    # Deduplicate — threshold 0.72 keeps distinct urban alternatives
+    unique = deduplicate_routes(raw, threshold=0.72)
     logger.info("Deduplicated: %d raw → %d unique", len(raw), len(unique))
 
-    # Filter outliers (> 1.6× shortest distance)
+    # Filter extreme outliers (>2.5× shortest) — keeps most alternatives
     if unique:
         best_dist = unique[0].get("distance", 0)
         if best_dist > 0:
-            unique = [r for r in unique if r.get("distance", 0) <= best_dist * 1.6]
+            unique = [r for r in unique if r.get("distance", 0) <= best_dist * 2.5]
 
     # Sort best-first
     unique.sort(key=lambda x: x.get("duration", float("inf")))
 
-    # Pad to top_k (no extra API calls)
-    padded = _pad_to_target(unique, target=top_k)
-
-    result = padded[:top_k]
+    # Return only real OSRM routes — synthetic padding removed because
+    # blended geometry does NOT follow roads (cuts through buildings/sea).
+    result = unique[:top_k]
     _ROUTE_CACHE[cache_key] = (now, result)
     logger.info(
-        "Returning %d routes for (%.4f,%.4f)→(%.4f,%.4f)",
+        "Returning %d real road-snapped routes for (%.4f,%.4f)→(%.4f,%.4f)",
         len(result), slat, slon, dlat, dlon,
     )
     return result

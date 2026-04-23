@@ -1,6 +1,6 @@
 import './RouteList.css'
 
-// ── Score bar (used in full cards only) ─────────────────────────────────────
+// ── Score bar ──────────────────────────────────────────────────────────────────
 function ScoreBar({ value }) {
   const pct = Math.round((1 - (value || 0)) * 100)
   return (
@@ -13,13 +13,16 @@ function ScoreBar({ value }) {
   )
 }
 
-// ── FULL card — Top 4 routes ─────────────────────────────────────────────────
-function RouteCardFull({ route, rank, isSelected, onSelect, onNavigate, canNavigate, source, destination }) {
-  const isBest    = rank === 1
-  const indicator = isBest ? 'best' : 'alt'
+// ── FULL card — Top 4 routes ──────────────────────────────────────────────────
+function RouteCardFull({
+  route, rank, isSelected, onSelect,
+  onNavigate, onReview, canNavigate,
+  source, destination,
+}) {
+  const isBest       = rank === 1
+  const indicator    = isBest ? 'best' : 'alt'
   const scoreQuality = Math.round((1 - (route.composite_score || 0)) * 100)
-
-  const rankLabels = { 1: 'BEST', 2: '2nd', 3: '3rd', 4: '4th' }
+  const rankLabels   = { 1: 'BEST', 2: '2nd', 3: '3rd', 4: '4th' }
 
   return (
     <button
@@ -27,11 +30,13 @@ function RouteCardFull({ route, rank, isSelected, onSelect, onNavigate, canNavig
       id={`route-rank-${rank}`}
       onClick={() => onSelect(rank)}
     >
+      {/* Rank badge */}
       <div className="rl-rank-col">
         <div className={`rl-rank-badge rl-rank-${indicator}`}>#{rank}</div>
         <span className={`rl-rank-label rl-rank-label-${rank}`}>{rankLabels[rank]}</span>
       </div>
 
+      {/* Main info */}
       <div className="rl-info">
         <div className="rl-path">
           <span className="rl-path-text">{source?.replace(/_/g, ' ')}</span>
@@ -56,20 +61,37 @@ function RouteCardFull({ route, rank, isSelected, onSelect, onNavigate, canNavig
 
         <ScoreBar value={route.composite_score} />
 
-        {isBest && onNavigate && (
-          <button
-            type="button"
-            className={`rl-nav-btn${canNavigate ? '' : ' rl-nav-btn-sim'}`}
-            id="rl-start-nav-btn"
-            onClick={e => { e.stopPropagation(); onNavigate(rank) }}
-            title={canNavigate ? 'Start real GPS navigation' : 'Simulate navigation along route'}
-          >
-            <span className="material-icons-round">navigation</span>
-            <span>{canNavigate ? 'Start Navigation' : 'Simulate Drive'}</span>
-          </button>
-        )}
+        {/* ── Direction / Review button on EVERY top-4 card ── */}
+        <div className="rl-action-row">
+          {canNavigate ? (
+            // Source = GPS location → full live navigation
+            <button
+              type="button"
+              className="rl-nav-btn"
+              id={`rl-navigate-btn-${rank}`}
+              onClick={e => { e.stopPropagation(); onNavigate(rank) }}
+              title="Start GPS turn-by-turn navigation"
+            >
+              <span className="material-icons-round">navigation</span>
+              <span>Start Navigation</span>
+            </button>
+          ) : (
+            // Source = typed address → zoom to route only
+            <button
+              type="button"
+              className="rl-review-btn"
+              id={`rl-review-btn-${rank}`}
+              onClick={e => { e.stopPropagation(); onReview(rank) }}
+              title="Zoom map to fit this route"
+            >
+              <span className="material-icons-round">zoom_in_map</span>
+              <span>Review Route</span>
+            </button>
+          )}
+        </div>
       </div>
 
+      {/* Score column */}
       <div className="rl-score-col">
         <span className="rl-score-val">{scoreQuality}</span>
         <span className="rl-score-lbl">score</span>
@@ -78,7 +100,7 @@ function RouteCardFull({ route, rank, isSelected, onSelect, onNavigate, canNavig
   )
 }
 
-// ── COMPACT card — Routes 5–50 (monochromatic) ───────────────────────────────
+// ── COMPACT card — Routes 5+ ───────────────────────────────────────────────────
 function RouteCardCompact({ route, rank, isSelected, onSelect }) {
   const scoreQuality = Math.round((1 - (route.composite_score || 0)) * 100)
   return (
@@ -90,10 +112,7 @@ function RouteCardCompact({ route, rank, isSelected, onSelect }) {
     >
       <span className="rl-compact-rank">#{rank}</span>
       <span className="rl-compact-bar-wrap">
-        <span
-          className="rl-compact-bar"
-          style={{ width: `${scoreQuality}%` }}
-        />
+        <span className="rl-compact-bar" style={{ width: `${scoreQuality}%` }} />
       </span>
       <span className="rl-compact-time">
         {route.estimated_time_min != null ? `${Math.round(route.estimated_time_min)}m` : '—'}
@@ -109,8 +128,12 @@ function RouteCardCompact({ route, rank, isSelected, onSelect }) {
   )
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
-export default function RouteList({ result, selectedRank, onSelectRoute, onNavigateRoute, canNavigate }) {
+// ── Main Component ─────────────────────────────────────────────────────────────
+export default function RouteList({
+  result, selectedRank,
+  onSelectRoute, onNavigateRoute, onReviewRoute,
+  canNavigate,
+}) {
   if (!result || !result.best_route) {
     return (
       <div className="route-list-empty">
@@ -123,30 +146,18 @@ export default function RouteList({ result, selectedRank, onSelectRoute, onNavig
     )
   }
 
-  // ── Build complete ordered list ───────────────────────────────────────────
-  // Strategy:
-  //   1. all_routes_summary = authoritative list of ALL scored routes (up to 50)
-  //   2. For ranks 1-4 we also have richer objects (best_route, alternative_routes)
-  //      — use them so we get path_geometry + segments
-  //   3. Sort by rank ascending
-
+  // Build ordered list — rich data for top 4, summary for the rest
   const richByRank = new Map()
-
-  // Rank 1 — best route
   richByRank.set(1, { rank: 1, ...result.best_route })
-
-  // Ranks 2-4 — alternative routes
   ;(result.alternative_routes || []).forEach((r, i) => {
     const rank = i + 2
     richByRank.set(rank, { rank, ...r })
   })
 
-  // Build master list from all_routes_summary (all 50) if available
   const summary = result.all_routes_summary || []
   let allRoutes = []
 
   if (summary.length > 0) {
-    // Use summary as base — override top-4 with rich objects
     allRoutes = summary.map(s => {
       const rank = s.rank ?? s.index ?? (summary.indexOf(s) + 1)
       return richByRank.has(rank)
@@ -154,11 +165,9 @@ export default function RouteList({ result, selectedRank, onSelectRoute, onNavig
         : { ...s, rank }
     })
   } else {
-    // Fallback: only top 4
     allRoutes = [...richByRank.values()]
   }
 
-  // Sort by rank
   allRoutes.sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999))
 
   const topRoutes  = allRoutes.filter(r => (r.rank ?? 999) <= 4)
@@ -180,6 +189,19 @@ export default function RouteList({ result, selectedRank, onSelectRoute, onNavig
         </div>
       </div>
 
+      {/* ── Navigation mode info banner ── */}
+      {canNavigate ? (
+        <div className="rl-nav-info rl-nav-info-gps">
+          <span className="material-icons-round">gps_fixed</span>
+          <span>GPS detected — <strong>Start Navigation</strong> enables live turn-by-turn</span>
+        </div>
+      ) : (
+        <div className="rl-nav-info rl-nav-info-review">
+          <span className="material-icons-round">zoom_in_map</span>
+          <span><strong>Review Route</strong> zooms the map to fit each route</span>
+        </div>
+      )}
+
       {/* ── Savings banner ── */}
       {result.savings && (result.savings.time_saved_min > 0 || result.savings.fuel_saved > 0) && (
         <div className="rl-savings">
@@ -196,7 +218,7 @@ export default function RouteList({ result, selectedRank, onSelectRoute, onNavig
 
       <div className="rl-routes">
 
-        {/* ── TOP 4: Highlighted full cards ── */}
+        {/* ── TOP 4 full cards ── */}
         <div className="rl-section-label rl-section-top">
           <span className="material-icons-round">star</span>
           Top Routes
@@ -211,13 +233,14 @@ export default function RouteList({ result, selectedRank, onSelectRoute, onNavig
             isSelected={selectedRank === route.rank}
             onSelect={onSelectRoute}
             onNavigate={onNavigateRoute}
+            onReview={onReviewRoute}
             canNavigate={canNavigate}
             source={result.source}
             destination={result.destination}
           />
         ))}
 
-        {/* ── ROUTES 5–50: Monochromatic compact cards ── */}
+        {/* ── Routes 5+: compact list ── */}
         {restRoutes.length > 0 && (
           <>
             <div className="rl-section-label rl-section-rest">
@@ -226,7 +249,6 @@ export default function RouteList({ result, selectedRank, onSelectRoute, onNavig
               <span className="rl-section-count">{restRoutes.length} more</span>
             </div>
 
-            {/* Compact table header */}
             <div className="rl-compact-header">
               <span>#</span>
               <span style={{ flex: 1 }}>score</span>

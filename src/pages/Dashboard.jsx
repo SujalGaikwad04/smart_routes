@@ -17,6 +17,8 @@ export default function Dashboard() {
   const [toast,         setToast]         = useState(null)
   const [activeTab,     setActiveTab]     = useState('routes') // routes | stats (mobile)
   const [isNavigating,  setIsNavigating]  = useState(false)
+  const [fuelStations,  setFuelStations]  = useState([])       // [{lat,lon,name}]
+  const [fuelCritical,  setFuelCritical]  = useState(false)
   const wsRef = useRef(null)
   const rerouteTimer = useRef(null)
 
@@ -61,6 +63,23 @@ export default function Dashboard() {
     }
   }, [])
 
+  // ── Fuel station fetch (Overpass API) ───────────────────────────────────────
+  async function fetchFuelStations(lat, lon, radiusM = 8000) {
+    try {
+      const q = `[out:json][timeout:10];node[amenity=fuel](around:${radiusM},${lat},${lon});out body;`
+      const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`)
+      const data = await res.json()
+      return (data.elements || []).map(el => ({
+        lat: el.lat, lon: el.lon,
+        name: el.tags?.name || el.tags?.brand || 'Fuel Station',
+        brand: el.tags?.brand || '',
+      }))
+    } catch (e) {
+      console.warn('[FuelStations] Overpass fetch failed:', e)
+      return []
+    }
+  }
+
   // ── Generate routes ───────────────────────────────────────────────────────
   const handleGenerate = useCallback(async (formData) => {
     setLoading(true)
@@ -79,6 +98,34 @@ export default function Dashboard() {
       showToast(`${data.routes_evaluated} routes evaluated in ${data.computation_time_s}s`, 'success')
       // Open WebSocket for rerouting
       if (data.session_id) connectWS(data.session_id)
+
+      // Show fuel stations at yellow (≤45%) OR red (≤20%) — early warning
+      const fuelLvl  = formData.fuel_level ?? 75
+      const mileage  = parseFloat(formData.mileage) || 15
+      const TANK_L   = 45
+      const fuelL    = (fuelLvl / 100) * TANK_L
+      const rangeKm  = fuelL * mileage
+      const distKm   = data.best_route?.distance_km ?? 0
+      const mathCrit = rangeKm < distKm * 1.10   // mathematically can't make it
+      const lowFuel  = fuelLvl <= 45             // yellow or red slider state
+      const needStations = mathCrit || lowFuel
+
+      setFuelCritical(needStations)
+
+      if (needStations && data.source_coords?.lat != null) {
+        const sc = data.source_coords
+        const dc = data.dest_coords
+        const midLat = dc?.lat != null ? (sc.lat + dc.lat) / 2 : sc.lat
+        const midLon = dc?.lon != null ? (sc.lon + dc.lon) / 2 : sc.lon
+        const stations = await fetchFuelStations(midLat, midLon, 8000)
+        setFuelStations(stations.slice(0, 10))
+        if (stations.length > 0) {
+          const lvlLabel = fuelLvl <= 20 ? 'Critical' : 'Low'
+          showToast(`⛽ ${lvlLabel} fuel — ${stations.length} stations mapped`, fuelLvl <= 20 ? 'error' : 'info')
+        }
+      } else {
+        setFuelStations([])
+      }
     } catch (err) {
       setError(err.message || 'Failed to reach backend. Is the server running?')
       showToast(err.message || 'Request failed', 'error')
@@ -93,6 +140,13 @@ export default function Dashboard() {
     lastFormRef.current = formData
     await handleGenerate(formData)
   }, [handleGenerate])
+
+  // ── Review Route (zoom to fit, no navigation) ─────────────────────────────
+  const handleReviewRoute = useCallback((rank) => {
+    setSelectedRank(rank)
+    setIsNavigating(false)
+    // MapView auto-zooms to the selected route bounds via its selectedRank effect
+  }, [])
 
   const canNavigate = useMemo(() => {
     if (!location || location.isSimulated || !result) return false;
@@ -174,6 +228,8 @@ export default function Dashboard() {
               rerouteEvent={rerouteEvent}
               isNavigating={isNavigating}
               userLocation={location}
+              fuelStations={fuelStations}
+              fuelCritical={fuelCritical}
             />
 
             {/* Loading overlay */}
@@ -219,6 +275,7 @@ export default function Dashboard() {
                 selectedRank={selectedRank}
                 onSelectRoute={(rank) => { setSelectedRank(rank); setIsNavigating(false); }}
                 onNavigateRoute={(rank) => { setSelectedRank(rank); setIsNavigating(true); }}
+                onReviewRoute={handleReviewRoute}
                 canNavigate={canNavigate}
               />
             ) : (

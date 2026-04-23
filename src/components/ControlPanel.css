@@ -335,3 +335,128 @@
   100% { transform: scale(1); }
 }
 
+/* ─────────────────────────────────────────────
+   Fuel Level Slider
+   ───────────────────────────────────────────── */
+
+.cp-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cp-fuel-badge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.cp-fuel-badge-green  { background: rgba(34,212,114,0.15); color: #22d472; border: 1px solid rgba(34,212,114,0.3); }
+.cp-fuel-badge-yellow { background: rgba(245,166,35,0.15);  color: #f5a623; border: 1px solid rgba(245,166,35,0.3); }
+.cp-fuel-badge-red    { background: rgba(255,79,109,0.15);  color: #ff4f6d; border: 1px solid rgba(255,79,109,0.3); }
+
+.cp-fuel-slider-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* Range input base reset */
+.cp-fuel-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 5px;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.cp-fuel-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  cursor: pointer;
+  border: 2px solid currentColor;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.cp-fuel-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+}
+
+.cp-fuel-slider-green { background: rgba(34,212,114,0.25); color: #22d472; }
+.cp-fuel-slider-green::-webkit-slider-thumb { border-color: #22d472; }
+
+.cp-fuel-slider-yellow { background: rgba(245,166,35,0.25); color: #f5a623; }
+.cp-fuel-slider-yellow::-webkit-slider-thumb { border-color: #f5a623; }
+
+.cp-fuel-slider-red { background: rgba(255,79,109,0.25); color: #ff4f6d; }
+.cp-fuel-slider-red::-webkit-slider-thumb { border-color: #ff4f6d; }
+
+/* Track fill bar */
+.cp-fuel-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.cp-fuel-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.25s ease, background 0.3s;
+}
+
+.cp-fuel-bar-fill.green  { background: linear-gradient(90deg, #17b35a, #22d472); }
+.cp-fuel-bar-fill.yellow { background: linear-gradient(90deg, #c87a10, #f5a623); }
+.cp-fuel-bar-fill.red    { background: linear-gradient(90deg, #c0263d, #ff4f6d); }
+
+/* Label row */
+.cp-fuel-track-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  color: var(--color-outline);
+  margin-top: -2px;
+}
+
+/* Warning / caution banners */
+.cp-fuel-warning,
+.cp-fuel-caution {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.cp-fuel-warning {
+  background: rgba(255,79,109,0.1);
+  border: 1px solid rgba(255,79,109,0.25);
+  color: #ff4f6d;
+}
+
+.cp-fuel-caution {
+  background: rgba(245,166,35,0.1);
+  border: 1px solid rgba(245,166,35,0.25);
+  color: #f5a623;
+}
+
+.cp-fuel-warning .material-icons-round,
+.cp-fuel-caution .material-icons-round {
+  font-size: 15px;
+}

@@ -59,6 +59,37 @@
 .rl-savings .material-icons-round { color: #22d472; font-size: 15px; flex-shrink: 0; }
 .rl-savings strong { color: #22d472; }
 
+/* Navigation mode info banner */
+.rl-nav-info {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  margin-bottom: 0.55rem;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+.rl-nav-info .material-icons-round { font-size: 14px; flex-shrink: 0; }
+.rl-nav-info strong { font-weight: 700; }
+
+.rl-nav-info-gps {
+  background: rgba(34,212,114,0.08);
+  border: 1px solid rgba(34,212,114,0.2);
+  color: rgba(255,255,255,0.65);
+}
+.rl-nav-info-gps .material-icons-round { color: #22d472; }
+.rl-nav-info-gps strong { color: #22d472; }
+
+.rl-nav-info-review {
+  background: rgba(74,158,245,0.07);
+  border: 1px solid rgba(74,158,245,0.18);
+  color: rgba(255,255,255,0.55);
+}
+.rl-nav-info-review .material-icons-round { color: #4a9ef5; }
+.rl-nav-info-review strong { color: #4a9ef5; }
+
 /* ── Route list container ── */
 .rl-routes { display: flex; flex-direction: column; gap: 0.3rem; }
 
@@ -206,20 +237,46 @@
 .rl-score-val { font-size: 1.1rem; font-weight: 800; color: var(--color-on-surface); line-height: 1.1; }
 .rl-score-lbl { font-size: 0.52rem; color: var(--color-on-surface-variant); }
 
-/* Nav button */
+/* Action row containing the direction/review button */
+.rl-action-row {
+  margin-top: 0.45rem;
+  display: flex;
+}
+
+/* Nav button — GPS start navigation */
 .rl-nav-btn {
   display: flex; align-items: center; gap: 0.3rem;
-  margin-top: 0.45rem;
-  padding: 0.28rem 0.65rem;
+  padding: 0.3rem 0.7rem;
   border-radius: 8px; border: none; cursor: pointer;
   font-size: 0.7rem; font-weight: 700;
+  font-family: var(--font-family);
   background: linear-gradient(135deg, #22d472, #4a9ef5);
   color: #0a0f1a;
   transition: opacity 0.2s, transform 0.15s;
+  white-space: nowrap;
 }
 .rl-nav-btn:hover { opacity: 0.88; transform: translateY(-1px); }
 .rl-nav-btn .material-icons-round { font-size: 14px; }
-.rl-nav-btn-sim { background: linear-gradient(135deg, #f5a623, #ff6b6b); }
+
+/* Review button — zoom to route only (manual address) */
+.rl-review-btn {
+  display: flex; align-items: center; gap: 0.3rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 8px; cursor: pointer;
+  font-size: 0.7rem; font-weight: 700;
+  font-family: var(--font-family);
+  background: rgba(74,158,245,0.12);
+  border: 1px solid rgba(74,158,245,0.3);
+  color: #4a9ef5;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+.rl-review-btn:hover {
+  background: rgba(74,158,245,0.22);
+  border-color: rgba(74,158,245,0.55);
+  transform: translateY(-1px);
+}
+.rl-review-btn .material-icons-round { font-size: 14px; }
 
 /* ══════════════════════════════════════════════════════
    COMPACT TABLE HEADER

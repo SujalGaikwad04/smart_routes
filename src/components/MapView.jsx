@@ -83,6 +83,8 @@ export default function MapView({
   rerouteEvent,
   isNavigating,
   userLocation,
+  fuelStations = [],
+  fuelCritical = false,
 }) {
   const hasData = result && result.best_route
 
@@ -379,8 +381,70 @@ export default function MapView({
       }))
     }
 
+    // ── LAYER 6: Fuel stations (when critical) ──────────────────────────────
+    if (fuelStations.length > 0) {
+      // Outer glow ring
+      lys.push(new ScatterplotLayer({
+        id:           'fuel-stations-glow',
+        data:         fuelStations,
+        getPosition:  d => [d.lon, d.lat],
+        getFillColor: [245, 166, 35, 40],
+        getRadius:    22, radiusUnits: 'pixels',
+        parameters:   { depthTest: false },
+      }))
+      // Main dot
+      lys.push(new ScatterplotLayer({
+        id:           'fuel-stations',
+        data:         fuelStations,
+        getPosition:  d => [d.lon, d.lat],
+        getFillColor: [245, 166, 35, 255],
+        getLineColor: [255, 255, 255],
+        stroked:      true,
+        lineWidthMinPixels: 2,
+        getRadius:    10, radiusUnits: 'pixels',
+        pickable:     true,
+        onHover:      info => setHoverInfo(info),
+        parameters:   { depthTest: false },
+      }))
+
+      // ── Route to nearest fuel station (only when critical) ─────────────
+      if (fuelCritical) {
+        const bestPath = allRoutes.find(r => r.rank === 1)?._path || []
+        if (bestPath.length > 0) {
+          // Find midpoint of best route
+          const midIdx = Math.floor(bestPath.length / 2)
+          const midPt  = bestPath[midIdx]   // [lng, lat]
+
+          // Find nearest fuel station to midpoint
+          let nearest = null, minDist = Infinity
+          fuelStations.forEach(st => {
+            const dx = st.lon - midPt[0]
+            const dy = st.lat - midPt[1]
+            const d  = dx * dx + dy * dy
+            if (d < minDist) { minDist = d; nearest = st }
+          })
+
+          if (nearest) {
+            lys.push(new PathLayer({
+              id:             'fuel-route',
+              data:           [{ path: [midPt, [nearest.lon, nearest.lat]] }],
+              getPath:        d => d.path,
+              getColor:       [245, 166, 35, 200],
+              getWidth:       3,
+              widthMinPixels: 2,
+              widthMaxPixels: 5,
+              getDashArray:   [6, 4],
+              dashJustified:  true,
+              capRounded:     true,
+              parameters:     { depthTest: false },
+            }))
+          }
+        }
+      }
+    }
+
     return lys
-  }, [bgRoutes, top4Routes, animProgress, selectedRank, isNavigating, userLocation, endpoints, allRoutes, onSelectRoute])
+  }, [bgRoutes, top4Routes, animProgress, selectedRank, isNavigating, userLocation, endpoints, allRoutes, onSelectRoute, fuelStations, fuelCritical])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -398,6 +462,12 @@ export default function MapView({
           <div className="deck-tooltip" style={{ left: hoverInfo.x + 12, top: hoverInfo.y + 12 }}>
             {hoverInfo.layer?.id === 'endpoints' ? (
               <strong>{hoverInfo.object.name?.replace(/_/g, ' ')}</strong>
+            ) : hoverInfo.layer?.id === 'fuel-stations' ? (
+              <>
+                <strong>⛽ {hoverInfo.object.name}</strong>
+                {hoverInfo.object.brand && <p>{hoverInfo.object.brand}</p>}
+                <p style={{ color: '#f5a623' }}>Fuel Station</p>
+              </>
             ) : (
               <>
                 <strong>Rank #{hoverInfo.object.rank}</strong>
@@ -422,7 +492,15 @@ export default function MapView({
             <div className="legend-row"><span className="legend-line" style={{ background: '#4a9ef5', height: 3 }} /><span>Alt #2</span></div>
             <div className="legend-row"><span className="legend-line" style={{ background: '#f7b636', height: 3 }} /><span>Alt #3</span></div>
             <div className="legend-row"><span className="legend-line" style={{ background: '#c864f5', height: 3 }} /><span>Alt #4</span></div>
-            <div className="legend-row"><span className="legend-line" style={{ background: '#6482a0', height: 1.5, opacity: 0.4 }} /><span>Background (46)</span></div>
+            {bgRoutes.length > 0 && (
+              <div className="legend-row"><span className="legend-line" style={{ background: '#6482a0', height: 1.5, opacity: 0.4 }} /><span>Background ({bgRoutes.length})</span></div>
+            )}
+            {fuelStations.length > 0 && (
+              <div className="legend-row">
+                <span style={{ width: 12, height: 12, background: '#f5a623', borderRadius: '50%', display:'inline-block', flexShrink: 0 }} />
+                <span style={{ color: '#f5a623' }}>⛽ {fuelStations.length} Fuel Stations</span>
+              </div>
+            )}
           </>
         ) : (
           <>

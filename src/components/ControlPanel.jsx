@@ -148,6 +148,7 @@ export default function ControlPanel({ onSubmit, loading }) {
     vehicle_type: 'car', vehicle_brand: '',
     vehicle_model: '', mileage: '', fuel_type: 'petrol', mode: 'fastest',
   })
+  const [fuelLevel,        setFuelLevel]        = useState(75)  // 0-100%
   const [priorityStops,    setPriorityStops]    = useState([])  // [{ label, lat, lon }]
   const [stopInput,        setStopInput]        = useState('')
   const [stopSuggestions,  setStopSuggestions]  = useState([])
@@ -292,6 +293,7 @@ export default function ControlPanel({ onSubmit, loading }) {
     onSubmit({
       ...form,
       priority_stops: priorityStops,
+      fuel_level: fuelLevel,
     })
   }
 
@@ -472,6 +474,60 @@ export default function ControlPanel({ onSubmit, loading }) {
             </select>
           </div>
         </div>
+      </div>
+
+      {/* ── Fuel Level Slider ── */}
+      <div className="cp-section">
+        <p className="cp-section-label">
+          Fuel Level
+          <span className={`cp-fuel-badge ${
+            fuelLevel <= 20 ? 'cp-fuel-badge-red'
+            : fuelLevel <= 45 ? 'cp-fuel-badge-yellow'
+            : 'cp-fuel-badge-green'
+          }`}>{fuelLevel}%</span>
+        </p>
+        <div className="cp-fuel-slider-wrap">
+          <input
+            type="range"
+            id="cp-fuel-level"
+            min="0"
+            max="100"
+            step="5"
+            value={fuelLevel}
+            onChange={e => setFuelLevel(Number(e.target.value))}
+            className={`cp-fuel-slider ${
+              fuelLevel <= 20 ? 'cp-fuel-slider-red'
+              : fuelLevel <= 45 ? 'cp-fuel-slider-yellow'
+              : 'cp-fuel-slider-green'
+            }`}
+          />
+          <div className="cp-fuel-track-labels">
+            <span>Empty</span>
+            <span>Quarter</span>
+            <span>Half</span>
+            <span>Full</span>
+          </div>
+          <div className="cp-fuel-bar">
+            <div
+              className={`cp-fuel-bar-fill ${
+                fuelLevel <= 20 ? 'red' : fuelLevel <= 45 ? 'yellow' : 'green'
+              }`}
+              style={{ width: `${fuelLevel}%` }}
+            />
+          </div>
+        </div>
+        {fuelLevel <= 20 && (
+          <div className="cp-fuel-warning">
+            <span className="material-icons-round">local_gas_station</span>
+            Critical — fuel stations shown on map
+          </div>
+        )}
+        {fuelLevel > 20 && fuelLevel <= 45 && (
+          <div className="cp-fuel-caution">
+            <span className="material-icons-round">warning</span>
+            Low fuel — consider refuelling soon
+          </div>
+        )}
       </div>
 
       {/* ── Mode ── */}
