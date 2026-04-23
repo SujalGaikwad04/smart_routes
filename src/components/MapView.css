@@ -154,3 +154,114 @@
   from { opacity:0; transform:translateY(16px); }
   to   { opacity:1; transform:translateY(0); }
 }
+
+/* ── 3D Toggle button ── */
+.map-3d-toggle {
+  position: absolute;
+  top: 52px;
+  right: 12px;
+  z-index: 500;
+  background: rgba(13, 20, 35, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 0.25s ease;
+  color: rgba(255,255,255,0.65);
+}
+.map-3d-toggle:hover {
+  background: rgba(34, 212, 114, 0.12);
+  border-color: rgba(34, 212, 114, 0.35);
+  color: #22d472;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(34,212,114,0.15);
+}
+.map-3d-toggle.active {
+  background: rgba(34, 212, 114, 0.15);
+  border-color: rgba(34, 212, 114, 0.5);
+  color: #22d472;
+  box-shadow: 0 0 12px rgba(34, 212, 114, 0.2);
+}
+.map-3d-toggle-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+/* ── Compass ── */
+.map-compass {
+  position: absolute;
+  top: 96px;
+  right: 14px;
+  z-index: 500;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(13, 20, 35, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: inset 0 0 0 1px rgba(34,212,114,0.08);
+}
+.map-compass:hover {
+  border-color: rgba(34, 212, 114, 0.35);
+  box-shadow: 0 0 10px rgba(34,212,114,0.2);
+}
+.map-compass-n {
+  font-size: 0.65rem;
+  font-weight: 900;
+  color: #ff4f6d;
+  letter-spacing: 0;
+  user-select: none;
+}
+
+/* ── Map Style Switcher ── */
+.map-style-switcher {
+  position: absolute;
+  bottom: 20px;
+  right: 16px;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.map-style-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  background: rgba(13, 20, 35, 0.88);
+  backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(255,255,255,0.1);
+  border-radius: 9px;
+  color: rgba(255,255,255,0.6);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.22s ease;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+.map-style-btn:hover {
+  background: rgba(34, 212, 114, 0.1);
+  border-color: rgba(34, 212, 114, 0.3);
+  color: rgba(255,255,255,0.9);
+  transform: translateX(-2px);
+}
+.map-style-btn.active {
+  background: rgba(34, 212, 114, 0.18);
+  border-color: rgba(34, 212, 114, 0.55);
+  color: #22d472;
+  box-shadow: 0 0 14px rgba(34,212,114,0.18), inset 0 0 8px rgba(34,212,114,0.05);
+}
+.map-style-btn .material-icons-round {
+  opacity: 0.85;
+}

@@ -17,14 +17,14 @@ import time
 from typing import List, Dict, Optional
 
 import httpx
+from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
-# { cache_key: (timestamp, [results]) }
-_GEOCODE_CACHE: Dict[str, tuple] = {}
-_SNAP_CACHE: Dict[str, tuple] = {}
 CACHE_TTL = 3600 * 24  # 24 hours
+_GEOCODE_CACHE = TTLCache(maxsize=1000, ttl=CACHE_TTL)
+_SNAP_CACHE = TTLCache(maxsize=2000, ttl=CACHE_TTL)
 
 # ── Mumbai Metropolitan Region bounding box ───────────────────────────────────
 # Covers Mumbai, Navi Mumbai, Thane, Kalyan, Dombivli, Badlapur, Karjat
@@ -207,9 +207,7 @@ async def snap_to_road(lat: float, lon: float) -> tuple:
     cache_key = f"{round(lat, 4)},{round(lon, 4)}"
     now = time.time()
     if cache_key in _SNAP_CACHE:
-        ts, result = _SNAP_CACHE[cache_key]
-        if now - ts < CACHE_TTL:
-            return result
+        return _SNAP_CACHE[cache_key]
 
     url = OSRM_NEAREST.format(lat=lat, lon=lon)
     try:
@@ -222,14 +220,14 @@ async def snap_to_road(lat: float, lon: float) -> tuple:
                     if waypoints:
                         loc = waypoints[0].get("location", [lon, lat])
                         snapped = (loc[1], loc[0])  # (lat, lon)
-                        _SNAP_CACHE[cache_key] = (now, snapped)
+                        _SNAP_CACHE[cache_key] = snapped
                         return snapped
     except Exception as exc:
         logger.warning("OSRM road-snap failed for (%s, %s): %s", lat, lon, exc)
 
     # Fallback: return original coords
     original = (lat, lon)
-    _SNAP_CACHE[cache_key] = (now, original)
+    _SNAP_CACHE[cache_key] = original
     return original
 
 
@@ -249,9 +247,7 @@ async def geocode(query: str, limit: int = 5, snap: bool = True) -> List[Dict]:
     key = _cache_key(q_stripped)
     now = time.time()
     if key in _GEOCODE_CACHE:
-        cached_time, cached_results = _GEOCODE_CACHE[key]
-        if now - cached_time < CACHE_TTL:
-            return cached_results[:limit]
+        return _GEOCODE_CACHE[key][:limit]
 
     results = []
     async with httpx.AsyncClient(timeout=8.0) as client:
@@ -306,7 +302,7 @@ async def geocode(query: str, limit: int = 5, snap: bool = True) -> List[Dict]:
         r.pop("_score", None)
 
     final = deduped[:max(limit, 3)]  # Always return at least 3 for suggestions
-    _GEOCODE_CACHE[key] = (now, final)
+    _GEOCODE_CACHE[key] = final
     logger.info("Geocoded '%s' → %d results (provider: %s)",
                 q_stripped, len(final), final[0].get("source", "?") if final else "none")
     return final[:limit]

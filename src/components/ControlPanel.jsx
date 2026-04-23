@@ -149,6 +149,7 @@ export default function ControlPanel({ onSubmit, loading }) {
     vehicle_model: '', mileage: '', fuel_type: 'petrol', mode: 'fastest',
   })
   const [fuelLevel,        setFuelLevel]        = useState(75)  // 0-100%
+  const [optimizeStops,    setOptimizeStops]    = useState(false)
   const [priorityStops,    setPriorityStops]    = useState([])  // [{ label, lat, lon }]
   const [stopInput,        setStopInput]        = useState('')
   const [stopSuggestions,  setStopSuggestions]  = useState([])
@@ -294,6 +295,7 @@ export default function ControlPanel({ onSubmit, loading }) {
       ...form,
       priority_stops: priorityStops,
       fuel_level: fuelLevel,
+      optimize_stops: optimizeStops,
     })
   }
 
@@ -422,6 +424,22 @@ export default function ControlPanel({ onSubmit, loading }) {
                 </button>
               </span>
             ))}
+          </div>
+        )}
+
+        {priorityStops.length > 1 && (
+          <div className="cp-field" style={{ marginTop: 12 }}>
+            <label className="cp-label cp-checkbox-label">
+              <input
+                type="checkbox"
+                checked={optimizeStops}
+                onChange={e => setOptimizeStops(e.target.checked)}
+              />
+              Auto-Optimize Stop Order (TSP Algorithm)
+            </label>
+            <p className="cp-optional" style={{ marginLeft: 24, marginTop: 4, display: 'block' }}>
+              We'll calculate the absolute fastest sequence to visit all stops.
+            </p>
           </div>
         )}
       </div>

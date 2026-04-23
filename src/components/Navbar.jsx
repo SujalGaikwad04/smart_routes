@@ -22,6 +22,9 @@ export default function Navbar({ compact = false }) {
           <Link to="/dashboard" className={`navbar-link${location.pathname === '/dashboard' ? ' active' : ''}`}>
             Dashboard
           </Link>
+          <Link to="/analytics" className={`navbar-link${location.pathname === '/analytics' ? ' active' : ''}`}>
+            Analytics
+          </Link>
           <Link to="/about" className={`navbar-link${location.pathname === '/about' ? ' active' : ''}`}>
             About
           </Link>

@@ -109,7 +109,7 @@ export function openRerouteSocket(sessionId, onMessage) {
   const ws = new WebSocket(url)
 
   ws.onopen = () => {
-    console.log('[WS] connected – session', sessionId)
+    // WebSocket connected
   }
 
   ws.onmessage = (e) => {
@@ -119,12 +119,12 @@ export function openRerouteSocket(sessionId, onMessage) {
     } catch (_) {}
   }
 
-  ws.onerror = (e) => {
-    console.warn('[WS] error', e)
+  ws.onerror = () => {
+    // WebSocket error – reconnect handled by caller
   }
 
   ws.onclose = () => {
-    console.log('[WS] closed – session', sessionId)
+    // WebSocket closed
   }
 
   // Send periodic ping

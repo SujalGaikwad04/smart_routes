@@ -271,7 +271,6 @@ async def stop_rerouting_loop():
 # Serialisation helper
 # ──────────────────────────────────────────────────────────────────────────────
 
-_GEO_CACHE = None
 
 def _serialise_route(r: Dict[str, Any]) -> Dict[str, Any]:
     """Return a JSON-safe subset of a scored route dict."""

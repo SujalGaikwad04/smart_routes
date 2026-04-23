@@ -12,7 +12,7 @@ This module:
 
 import os
 import logging
-import pickle
+import joblib
 from pathlib import Path
 from typing import List, Optional
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Paths
 # ──────────────────────────────────────────────────────────────────────────────
 _DIR = Path(__file__).parent.parent / "data"
-MODEL_PATH = _DIR / "rf_model.pkl"
+MODEL_PATH = _DIR / "rf_model.joblib"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Feature column names (must match features_to_vector in feature_engine.py)
@@ -104,8 +104,7 @@ def train_model(force_retrain: bool = False) -> Pipeline:
     """
     if MODEL_PATH.exists() and not force_retrain:
         logger.info("Loading cached ML model from %s", MODEL_PATH)
-        with open(MODEL_PATH, "rb") as f:
-            return pickle.load(f)
+        return joblib.load(MODEL_PATH)
 
     logger.info("Training RandomForestRegressor on synthetic data …")
     df = _generate_training_data(n_samples=2000)
@@ -138,8 +137,7 @@ def train_model(force_retrain: bool = False) -> Pipeline:
 
     # Persist
     _DIR.mkdir(parents=True, exist_ok=True)
-    with open(MODEL_PATH, "wb") as f:
-        pickle.dump(pipeline, f)
+    joblib.dump(pipeline, MODEL_PATH)
     logger.info("Model saved to %s", MODEL_PATH)
 
     return pipeline

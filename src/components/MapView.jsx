@@ -3,16 +3,53 @@ import Map from 'react-map-gl/maplibre'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import DeckGL from '@deck.gl/react'
-import { PathLayer, ScatterplotLayer } from '@deck.gl/layers'
+import { PathLayer, ScatterplotLayer, ColumnLayer } from '@deck.gl/layers'
+import { TripsLayer } from '@deck.gl/geo-layers'
 import './MapView.css'
 
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+// ── Map styles ───────────────────────────────────────────────────────────────
+const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+
+
+// Satellite + CartoDB dark labels overlay (hybrid)
+const HYBRID_STYLE = {
+  version: 8,
+  glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
+  sources: {
+    satellite: {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      attribution: '© Esri, Maxar, Earthstar Geographics',
+      maxzoom: 19,
+    },
+    labels: {
+      type: 'raster',
+      tiles: [
+        'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_only_labels/{z}/{x}/{y}.png',
+        'https://cartodb-basemaps-b.global.ssl.fastly.net/dark_only_labels/{z}/{x}/{y}.png',
+      ],
+      tileSize: 256,
+      maxzoom: 18,
+    },
+  },
+  layers: [
+    { id: 'satellite-layer', type: 'raster', source: 'satellite', minzoom: 0, maxzoom: 22 },
+    { id: 'labels-layer',    type: 'raster', source: 'labels',    minzoom: 0, maxzoom: 22, paint: { 'raster-opacity': 0.9 } },
+  ],
+}
+
+const MAP_STYLES = {
+  dark:   { style: DARK_STYLE,   label: 'Dark',   icon: 'dark_mode' },
+  hybrid: { style: HYBRID_STYLE, label: 'Hybrid', icon: 'layers' },
+}
+
 const INITIAL_VIEW_STATE = {
   longitude: 72.9781,
   latitude:  19.1183,
-  zoom:      10,
-  pitch:     45,
-  bearing:   0,
+  zoom:      11,
+  pitch:     60,
+  bearing:   -15,
 }
 
 // Route colour palette
@@ -39,7 +76,7 @@ function getBounds(path) {
   return { minLng, maxLng, minLat, maxLat }
 }
 
-function boundsToViewState(bounds, currentPitch = 45) {
+function boundsToViewState(bounds, currentPitch = 60) {
   if (!bounds) return null
   const centerLng = (bounds.minLng + bounds.maxLng) / 2
   const centerLat = (bounds.minLat + bounds.maxLat) / 2
@@ -49,14 +86,13 @@ function boundsToViewState(bounds, currentPitch = 45) {
   const zoom      = Math.max(8, Math.min(15, Math.log2(0.8 / span) + 9))
   return {
     longitude: centerLng, latitude: centerLat,
-    zoom, pitch: currentPitch, bearing: 0,
-    transitionDuration: 800,
+    zoom, pitch: currentPitch, bearing: -15,
+    transitionDuration: 900,
   }
 }
 
 /**
  * Build per-route path data with a progress fraction [0..1].
- * progress = 1.0 means fully drawn (animation complete).
  */
 function buildAnimatedPath(path, progress) {
   if (!path || path.length < 2) return path || []
@@ -65,13 +101,21 @@ function buildAnimatedPath(path, progress) {
   const frac  = (progress * total) - idx
 
   const partial = path.slice(0, idx + 1)
-  // Interpolate the last point
   if (idx < total && frac > 0) {
     const [x0, y0] = path[idx]
     const [x1, y1] = path[idx + 1]
     partial.push([x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac])
   }
   return partial
+}
+
+// Build timestamp-stamped waypoints for TripsLayer from a path
+function buildTripWaypoints(path) {
+  if (!path || path.length < 2) return []
+  return path.map((pt, i) => ({
+    coordinates: pt,
+    timestamp: i / (path.length - 1),  // 0..1
+  }))
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -90,13 +134,38 @@ export default function MapView({
 
   const [viewState,  setViewState]  = useState(INITIAL_VIEW_STATE)
   const [hoverInfo,  setHoverInfo]  = useState(null)
+  const [is3D,       setIs3D]       = useState(true)
+  const [mapStyleKey, setMapStyleKey] = useState('dark')  // dark | satellite | hybrid
 
-  // Animation: progress per top-4 route rank (0..1), stays at 1 when done
+  // Trip animation time [0..1] looping
+  const [tripTime, setTripTime] = useState(0)
+  const tripRafRef = useRef(null)
+  const tripStartRef = useRef(null)
+  const TRIP_LOOP_DURATION = 2800 // ms for one full sweep
+
+  // Route draw animation
   const [animProgress, setAnimProgress] = useState({})
-  const animRef    = useRef({})   // { rank: { startTs, duration } }
+  const animRef    = useRef({})
   const rafRef     = useRef(null)
   const prevResultRef   = useRef(null)
   const prevSelectedRef = useRef(null)
+
+  // ── Trips animation loop ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!hasData) return
+
+    const tick = (ts) => {
+      if (!tripStartRef.current) tripStartRef.current = ts
+      const elapsed = (ts - tripStartRef.current) % TRIP_LOOP_DURATION
+      setTripTime(elapsed / TRIP_LOOP_DURATION)
+      tripRafRef.current = requestAnimationFrame(tick)
+    }
+    tripRafRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (tripRafRef.current) cancelAnimationFrame(tripRafRef.current)
+      tripStartRef.current = null
+    }
+  }, [hasData])
 
   // ── Build all route data from result ───────────────────────────────────────
   const { allRoutes, bgRoutes, top4Routes, endpoints } = useMemo(() => {
@@ -109,10 +178,6 @@ export default function MapView({
       if (!all.find(a => a.rank === r.rank)) all.push({ ...r })
     })
 
-    // Normalise path — handle all OSRM geometry formats:
-    //   path_geometry: [[lng, lat], ...]
-    //   path:          [[lng, lat], ...]
-    //   geometry.coordinates: [[lng, lat], ...]
     all.forEach(r => {
       const pg = r.path_geometry
       const p  = r.path
@@ -121,7 +186,6 @@ export default function MapView({
                 : (p  && p.length  > 0) ? p
                 : (gc && gc.length > 0) ? gc
                 : []
-      // Filter out any degenerate points
       r._path = raw.filter(pt => Array.isArray(pt) && pt.length >= 2
         && isFinite(pt[0]) && isFinite(pt[1]))
     })
@@ -129,38 +193,31 @@ export default function MapView({
     const bg  = all.filter(r => r.rank > 4)
     const top = all.filter(r => r.rank <= 4).sort((a, b) => a.rank - b.rank)
 
-    // Endpoints: prefer path geometry, fallback to source_coords/dest_coords from backend
     const pts = []
     const best = all.find(r => r.rank === 1)
     if (best && best._path.length > 0) {
       pts.push({ coords: best._path[0],                     type: 'origin', name: result.source })
       pts.push({ coords: best._path[best._path.length - 1], type: 'dest',   name: result.destination })
     } else {
-      // GPS / coord fallback — backend always returns source_coords & dest_coords
       const sc = result.source_coords
       const dc = result.dest_coords
       if (sc?.lat != null) pts.push({ coords: [sc.lon, sc.lat], type: 'origin', name: result.source })
       if (dc?.lat != null) pts.push({ coords: [dc.lon, dc.lat], type: 'dest',   name: result.destination })
     }
 
-
     return { allRoutes: all, bgRoutes: bg, top4Routes: top, endpoints: pts }
   }, [hasData, result])
 
-  // ── One-time animation for top 4 routes ────────────────────────────────────
-  // Starts fresh whenever `result` changes. Animates each top-4 route
-  // sequentially with a slight stagger, then STOPS (no loop).
+  // ── One-time draw animation for top 4 routes ───────────────────────────────
   useEffect(() => {
-    // Reset progress
     setAnimProgress({})
     animRef.current = {}
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
 
     if (!hasData || top4Routes.length === 0) return
 
-    const ANIM_DURATION = 1400   // ms per route draw
-    const STAGGER       = 120    // ms between route starts
-
+    const ANIM_DURATION = 1400
+    const STAGGER       = 120
     const now = performance.now()
     top4Routes.forEach((r, i) => {
       animRef.current[r.rank] = {
@@ -177,16 +234,9 @@ export default function MapView({
       let anyRunning = false
       for (const [rankStr, info] of Object.entries(animRef.current)) {
         const rank = Number(rankStr)
-        if (info.done) {
-          next[rank] = 1.0
-          continue
-        }
+        if (info.done) { next[rank] = 1.0; continue }
         const elapsed = ts - info.startTs
-        if (elapsed < 0) {
-          next[rank] = 0
-          anyRunning = true
-          continue
-        }
+        if (elapsed < 0) { next[rank] = 0; anyRunning = true; continue }
         const p = Math.min(1, elapsed / info.duration)
         next[rank] = p
         if (p < 1) anyRunning = true
@@ -200,7 +250,6 @@ export default function MapView({
         rafRef.current = null
       }
     }
-
     rafRef.current = requestAnimationFrame(tick)
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
   }, [result]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -216,7 +265,6 @@ export default function MapView({
       const vs = boundsToViewState(bounds, viewState.pitch)
       if (vs) setViewState(vs)
     } else {
-      // GPS / coord fallback — backend returns source_coords & dest_coords objects
       const sc = result.source_coords
       const dc = result.dest_coords
       if (sc?.lat != null && dc?.lat != null) {
@@ -228,7 +276,6 @@ export default function MapView({
       }
     }
   }, [result]) // eslint-disable-line react-hooks/exhaustive-deps
-
 
   // ── Camera: fit selected route on card click ───────────────────────────────
   useEffect(() => {
@@ -251,16 +298,30 @@ export default function MapView({
     setViewState(v => ({
       ...v,
       longitude: userLocation.longitude, latitude: userLocation.latitude,
-      zoom: 16, pitch: 60, bearing: userLocation.heading || 0,
+      zoom: 16, pitch: 65, bearing: userLocation.heading || 0,
       transitionDuration: 100,
     }))
   }, [isNavigating, userLocation])
+
+  // ── 2D / 3D toggle ────────────────────────────────────────────────────────
+  function toggle3D() {
+    setIs3D(prev => {
+      const next = !prev
+      setViewState(v => ({
+        ...v,
+        pitch:   next ? 60 : 0,
+        bearing: next ? -15 : 0,
+        transitionDuration: 700,
+      }))
+      return next
+    })
+  }
 
   // ── Build Deck.gl layers ───────────────────────────────────────────────────
   const layers = useMemo(() => {
     const lys = []
 
-    // ── LAYER 1: Background routes (drawn first, behind everything) ──────────
+    // ── LAYER 1: Background routes ───────────────────────────────────────────
     if (bgRoutes.length > 0) {
       lys.push(new PathLayer({
         id:             'bg-routes',
@@ -283,9 +344,8 @@ export default function MapView({
       }))
     }
 
-    // ── LAYER 2: Top 4 routes with one-time draw animation ──────────────────
+    // ── LAYER 2: Top 4 routes – base thick path ──────────────────────────────
     if (top4Routes.length > 0) {
-      // Build animated path data — each route sliced to current progress
       const animatedData = top4Routes.map(r => {
         const progress = animProgress[r.rank] ?? 0
         const drawnPath = progress >= 1
@@ -308,7 +368,7 @@ export default function MapView({
           if (isNavigating) return [...BG_COLOR, 20]
           const col  = TOP4_COLORS[(d.rank - 1) % TOP4_COLORS.length]
           const isSel = selectedRank == null || d.rank === selectedRank
-          return [...col, isSel ? 255 : 120]
+          return [...col, isSel ? 200 : 80]  // slightly dimmer base since trips layer adds glow
         },
         getWidth:       d => {
           const base = d.rank === 1 ? 6 : d.rank <= 2 ? 5 : 4
@@ -317,7 +377,6 @@ export default function MapView({
         onHover:        info => !isNavigating && setHoverInfo(info),
         onClick:        info => { if (!isNavigating && info.object) onSelectRoute(info.object.rank) },
         parameters:     { depthTest: false },
-        // Re-render when animation progress changes or selection changes
         updateTriggers: {
           getPath:  [JSON.stringify(animProgress)],
           getColor: [selectedRank, isNavigating, JSON.stringify(animProgress)],
@@ -326,7 +385,41 @@ export default function MapView({
       }))
     }
 
-    // ── LAYER 3: Navigation traffic path ────────────────────────────────────
+    // ── LAYER 3: TripsLayer – animated neon light trail on top 4 routes ──────
+    if (top4Routes.length > 0 && !isNavigating) {
+      const tripsData = top4Routes
+        .filter(r => (animProgress[r.rank] ?? 0) >= 0.5)  // only show after route is drawn
+        .map(r => ({
+          ...r,
+          waypoints: buildTripWaypoints(r._path),
+        }))
+        .filter(r => r.waypoints.length >= 2)
+
+      if (tripsData.length > 0) {
+        lys.push(new TripsLayer({
+          id:            'trips-glow',
+          data:          tripsData,
+          getPath:       d => d.waypoints.map(w => w.coordinates),
+          getTimestamps: d => d.waypoints.map(w => w.timestamp),
+          getColor:      d => {
+            const col = TOP4_COLORS[(d.rank - 1) % TOP4_COLORS.length]
+            const isSel = selectedRank == null || d.rank === selectedRank
+            return [...col, isSel ? 255 : 160]
+          },
+          currentTime:   tripTime,
+          trailLength:   0.18,
+          widthMinPixels: d => d.rank === 1 ? 6 : 4,
+          widthMaxPixels: d => d.rank === 1 ? 10 : 7,
+          capRounded:    true,
+          parameters:    { depthTest: false },
+          updateTriggers: {
+            getColor: [selectedRank],
+          },
+        }))
+      }
+    }
+
+    // ── LAYER 4: Navigation traffic path ────────────────────────────────────
     const activeRoute = allRoutes.find(r => r.rank === selectedRank)
     if (isNavigating && activeRoute?.segments) {
       lys.push(new PathLayer({
@@ -343,7 +436,7 @@ export default function MapView({
       }))
     }
 
-    // ── LAYER 4: GPS user marker ─────────────────────────────────────────────
+    // ── LAYER 5: GPS user marker ─────────────────────────────────────────────
     if (isNavigating && userLocation) {
       lys.push(new ScatterplotLayer({
         id:           'user-marker-bg',
@@ -363,10 +456,43 @@ export default function MapView({
       }))
     }
 
-    // ── LAYER 5: Source / destination endpoints ──────────────────────────────
+    // ── LAYER 6: 3D Column towers at endpoints ───────────────────────────────
     if (!isNavigating && endpoints.length > 0) {
+      // Glow base ring
       lys.push(new ScatterplotLayer({
-        id:               'endpoints',
+        id:           'endpoint-glow',
+        data:         endpoints,
+        getPosition:  d => d.coords,
+        getFillColor: d => d.type === 'origin'
+          ? [34, 212, 114, 40]
+          : [255, 79, 109, 40],
+        getRadius:    40, radiusUnits: 'pixels',
+        parameters:   { depthTest: false },
+      }))
+
+      // 3D extruded column towers
+      lys.push(new ColumnLayer({
+        id:              'endpoint-towers',
+        data:            endpoints,
+        diskResolution:  32,
+        radius:          35,
+        extruded:        true,
+        pickable:        true,
+        getPosition:     d => d.coords,
+        getFillColor:    d => d.type === 'origin'
+          ? [34, 212, 114, 220]
+          : [255, 79, 109, 220],
+        getLineColor:    [255, 255, 255, 80],
+        getElevation:    d => d.type === 'origin' ? 120 : 100,
+        lineWidthMinPixels: 1,
+        stroked:         true,
+        onHover:         info => setHoverInfo(info),
+        updateTriggers:  {},
+      }))
+
+      // Dot cap on top of each tower
+      lys.push(new ScatterplotLayer({
+        id:               'endpoint-dots',
         data:             endpoints,
         getPosition:      d => d.coords,
         getFillColor:     d => d.type === 'origin' ? [34,212,114,255] : [255,79,109,255],
@@ -381,9 +507,8 @@ export default function MapView({
       }))
     }
 
-    // ── LAYER 6: Fuel stations (when critical) ──────────────────────────────
+    // ── LAYER 7: Fuel stations ─────────────────────────────────────────────
     if (fuelStations.length > 0) {
-      // Outer glow ring
       lys.push(new ScatterplotLayer({
         id:           'fuel-stations-glow',
         data:         fuelStations,
@@ -392,7 +517,6 @@ export default function MapView({
         getRadius:    22, radiusUnits: 'pixels',
         parameters:   { depthTest: false },
       }))
-      // Main dot
       lys.push(new ScatterplotLayer({
         id:           'fuel-stations',
         data:         fuelStations,
@@ -407,15 +531,11 @@ export default function MapView({
         parameters:   { depthTest: false },
       }))
 
-      // ── Route to nearest fuel station (only when critical) ─────────────
       if (fuelCritical) {
         const bestPath = allRoutes.find(r => r.rank === 1)?._path || []
         if (bestPath.length > 0) {
-          // Find midpoint of best route
           const midIdx = Math.floor(bestPath.length / 2)
-          const midPt  = bestPath[midIdx]   // [lng, lat]
-
-          // Find nearest fuel station to midpoint
+          const midPt  = bestPath[midIdx]
           let nearest = null, minDist = Infinity
           fuelStations.forEach(st => {
             const dx = st.lon - midPt[0]
@@ -423,7 +543,6 @@ export default function MapView({
             const d  = dx * dx + dy * dy
             if (d < minDist) { minDist = d; nearest = st }
           })
-
           if (nearest) {
             lys.push(new PathLayer({
               id:             'fuel-route',
@@ -444,7 +563,8 @@ export default function MapView({
     }
 
     return lys
-  }, [bgRoutes, top4Routes, animProgress, selectedRank, isNavigating, userLocation, endpoints, allRoutes, onSelectRoute, fuelStations, fuelCritical])
+  }, [bgRoutes, top4Routes, animProgress, selectedRank, isNavigating, userLocation,
+      endpoints, allRoutes, onSelectRoute, fuelStations, fuelCritical, tripTime])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -456,11 +576,12 @@ export default function MapView({
         controller={true}
         getCursor={({ isHovering }) => isHovering ? 'pointer' : 'grab'}
       >
-        <Map reuseMaps mapStyle={MAP_STYLE} mapLib={maplibregl} />
+        <Map reuseMaps mapStyle={MAP_STYLES[mapStyleKey].style} mapLib={maplibregl} />
+
 
         {hoverInfo && hoverInfo.object && !isNavigating && (
           <div className="deck-tooltip" style={{ left: hoverInfo.x + 12, top: hoverInfo.y + 12 }}>
-            {hoverInfo.layer?.id === 'endpoints' ? (
+            {hoverInfo.layer?.id === 'endpoints' || hoverInfo.layer?.id === 'endpoint-towers' || hoverInfo.layer?.id === 'endpoint-dots' ? (
               <strong>{hoverInfo.object.name?.replace(/_/g, ' ')}</strong>
             ) : hoverInfo.layer?.id === 'fuel-stations' ? (
               <>
@@ -483,7 +604,43 @@ export default function MapView({
         )}
       </DeckGL>
 
-      {/* Legend */}
+      {/* 3D Toggle Button */}
+      <button
+        className={`map-3d-toggle ${is3D ? 'active' : ''}`}
+        onClick={toggle3D}
+        title={is3D ? 'Switch to 2D view' : 'Switch to 3D view'}
+        id="map-3d-toggle-btn"
+      >
+        <span className="map-3d-toggle-label">{is3D ? '3D' : '2D'}</span>
+      </button>
+
+      {/* Compass ring (shows bearing) */}
+      <div
+        className="map-compass"
+        style={{ transform: `rotate(${viewState.bearing ?? 0}deg)` }}
+        onClick={() => setViewState(v => ({ ...v, bearing: 0, transitionDuration: 500 }))}
+        title="Reset bearing north"
+      >
+        <span className="map-compass-n">N</span>
+      </div>
+
+      {/* Style switcher (Dark / Satellite / Hybrid) */}
+      <div className="map-style-switcher">
+        {Object.entries(MAP_STYLES).map(([key, { label, icon }]) => (
+          <button
+            key={key}
+            className={`map-style-btn ${mapStyleKey === key ? 'active' : ''}`}
+            onClick={() => setMapStyleKey(key)}
+            title={`${label} view`}
+            id={`map-style-${key}`}
+          >
+            <span className="material-icons-round" style={{ fontSize: 15 }}>{icon}</span>
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+
+
       <div className="map-legend">
         <div className="map-legend-title">{isNavigating ? 'Live Navigation' : 'Routing Engine'}</div>
         {!isNavigating ? (
@@ -524,12 +681,12 @@ export default function MapView({
           {isNavigating
             ? 'Live Traffic & GPS'
             : hasData
-              ? `${result.routes_evaluated || allRoutes.length} paths evaluated via WebGL`
-              : 'AI Map Engine – MMR Coverage'}
+              ? `${result.routes_evaluated || allRoutes.length} paths · 3D WebGL`
+              : 'AI Map Engine – 3D View'}
         </span>
       </div>
 
-      {/* Re-route toast */}
+      {/* Reroute toast */}
       {rerouteEvent && (
         <div className="map-reroute-toast fade-in-up">
           <span className="material-icons-round">refresh</span>
@@ -545,7 +702,7 @@ export default function MapView({
         <div className="map-empty-overlay">
           <span className="material-icons-round">route</span>
           <p>Enter any location in Mumbai, Navi Mumbai, Thane, Badlapur, Karjat…</p>
-          <p style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: 4 }}>Real-world roads · 50 routes · AI ranked</p>
+          <p style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: 4 }}>Real-world roads · 50 routes · AI ranked · 3D map</p>
         </div>
       )}
     </div>

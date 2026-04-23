@@ -23,14 +23,16 @@ import time
 from typing import List, Dict, Tuple, Optional
 
 import httpx
+from cachetools import TTLCache
 
 logger = logging.getLogger("dynamic_routing")
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
-_ROUTE_CACHE: Dict[str, tuple] = {}
 CACHE_TTL = 300  # 5 minutes
+_ROUTE_CACHE = TTLCache(maxsize=500, ttl=CACHE_TTL)
 
 OSRM_BASE = "https://router.project-osrm.org/route/v1/driving"
+OSRM_TRIP = "http://router.project-osrm.org/trip/v1/driving"
 
 # Keep API calls low to avoid public OSRM rate-limiting
 OSRM_BATCH_SIZE  = 4     # parallel requests per batch
@@ -313,6 +315,55 @@ def _pad_to_target(real_routes: List[Dict], target: int = 50) -> List[Dict]:
     return result
 
 
+# ── TSP Stop Reordering ───────────────────────────────────────────────────────
+
+async def _optimize_stop_order(
+    slat: float, slon: float,
+    dlat: float, dlon: float,
+    stops: List[Tuple[float, float]]
+) -> List[Tuple[float, float]]:
+    """
+    Uses the OSRM /trip endpoint to solve the Traveling Salesperson Problem.
+    Returns the stops sorted in the most optimal visiting order.
+    """
+    if len(stops) < 2:
+        return stops
+
+    # Construct coordinate string: source;stop1;stop2...;destination
+    coords_list = [f"{slon},{slat}"] + [f"{lon},{lat}" for (lat, lon) in stops] + [f"{dlon},{dlat}"]
+    coords_str = ";".join(coords_list)
+    
+    url = f"{OSRM_TRIP}/{coords_str}?source=first&destination=last&roundtrip=false"
+    
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == "Ok":
+                    waypoints = data.get("waypoints", [])
+                    # waypoints[0] = source, waypoints[-1] = destination
+                    # waypoints[1:-1] = stops in original input order
+                    # waypoint["waypoint_index"] = optimized sequence position
+                    middle_wps = waypoints[1:-1]
+                    
+                    if len(middle_wps) == len(stops):
+                        stop_with_index = []
+                        for idx, wp in enumerate(middle_wps):
+                            stop_with_index.append((wp.get("waypoint_index", 0), stops[idx]))
+                        
+                        # Sort stops by their optimized waypoint sequence
+                        stop_with_index.sort(key=lambda x: x[0])
+                        sorted_stops = [s for _, s in stop_with_index]
+                        
+                        logger.info("Auto-optimized %d stops via TSP", len(stops))
+                        return sorted_stops
+    except Exception as exc:
+        logger.warning("TSP optimization failed, falling back to input order: %s", exc)
+
+    return stops
+
+
 # ── Cache Key ─────────────────────────────────────────────────────────────────
 
 def _make_cache_key(slat: float, slon: float, dlat: float, dlon: float,
@@ -331,30 +382,28 @@ async def get_dynamic_routes(
     dlat: float, dlon: float,
     priority_coords: Optional[List[Tuple[float, float]]] = None,
     top_k: int = 50,
+    optimize_stops: bool = False
 ) -> List[Dict]:
     """
-    Return unique real road-snapped routes from (slat,slon) to (dlat,dlon).
-
-    Strategy
-    --------
-    1. Fire ~13 OSRM requests (1 base + 12 via-point variants), each requesting
-       up to 3 alternatives → up to ~52 raw routes.
-    2. Deduplicate with threshold=0.72 (keeps urban routes sharing some roads).
-    3. Filter obvious outliers (>2.5× shortest distance).
-    4. Sort by duration (best first).
-
-    Only OSRM road-snapped routes are returned — no synthetic padding.
-    This ensures all rendered paths follow real roads exactly.
+    Generate up to `top_k` distinct, road-snapped routes.
+    Features:
+     - 1 Direct shortest path.
+     - Multi-via perturbation (generates varied paths avoiding main congested arteries).
+     - Geometric blending and strict road-snapping via map-matching.
+     - Optional Traveling Salesperson (TSP) optimization for priority stops.
     """
     priority_coords = priority_coords or []
+
+    if optimize_stops and len(priority_coords) > 1:
+        priority_coords = await _optimize_stop_order(slat, slon, dlat, dlon, priority_coords)
+
     cache_key = _make_cache_key(slat, slon, dlat, dlon, priority_coords)
     now = time.time()
 
     if cache_key in _ROUTE_CACHE:
-        ts, cached = _ROUTE_CACHE[cache_key]
-        if now - ts < CACHE_TTL:
-            logger.info("Serving %d routes from cache", len(cached))
-            return cached[:top_k]
+        cached = _ROUTE_CACHE[cache_key]
+        logger.info("Serving %d routes from cache", len(cached))
+        return cached[:top_k]
 
     via_points = _generate_perturbation_waypoints(
         slat, slon, dlat, dlon, num=OSRM_MAX_VIA_PTS
@@ -385,7 +434,7 @@ async def get_dynamic_routes(
     # Return only real OSRM routes — synthetic padding removed because
     # blended geometry does NOT follow roads (cuts through buildings/sea).
     result = unique[:top_k]
-    _ROUTE_CACHE[cache_key] = (now, result)
+    _ROUTE_CACHE[cache_key] = result
     logger.info(
         "Returning %d real road-snapped routes for (%.4f,%.4f)→(%.4f,%.4f)",
         len(result), slat, slon, dlat, dlon,

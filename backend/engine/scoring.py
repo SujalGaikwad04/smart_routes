@@ -26,7 +26,9 @@ WEIGHTS = {
     "priority":         0.05,
 }
 
-assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9, "Weights must sum to 1.0"
+if abs(sum(WEIGHTS.values()) - 1.0) >= 1e-9:
+    raise RuntimeError(f"WEIGHTS must sum to 1.0, got {sum(WEIGHTS.values())}")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Eco mode overrides

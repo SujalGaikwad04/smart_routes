@@ -30,6 +30,11 @@ export function useGeolocation(isNavigating, activeRoute) {
   const [error, setError] = useState(null)
   const simRef = useRef({ active: false, index: 0, progress: 0 })
   const watchIdRef = useRef(null)
+  const activeRouteRef = useRef(activeRoute)
+
+  useEffect(() => {
+    activeRouteRef.current = activeRoute
+  }, [activeRoute])
 
   useEffect(() => {
     if (!isNavigating) {
@@ -79,7 +84,7 @@ export function useGeolocation(isNavigating, activeRoute) {
 
   function startSimulation() {
     if (simRef.current.active) return;
-    if (!activeRoute || !activeRoute.path_geometry) return;
+    if (!activeRouteRef.current || !activeRouteRef.current.path_geometry) return;
     
     simRef.current.active = true;
     simRef.current.index = 0;
@@ -93,7 +98,7 @@ export function useGeolocation(isNavigating, activeRoute) {
       const dt = (now - lastTime) / 1000; // seconds
       lastTime = now;
       
-      const geom = activeRoute.path_geometry;
+      const geom = activeRouteRef.current.path_geometry;
       let i = simRef.current.index;
       
       if (i >= geom.length - 1) {
@@ -106,12 +111,12 @@ export function useGeolocation(isNavigating, activeRoute) {
       
       // Get traffic density for this segment if available
       let density = 0.5; // default moderate
-      if (activeRoute.segments) {
+      if (activeRouteRef.current.segments) {
          // Find which segment this point belongs to (approximation by index ratio)
          const ratio = i / geom.length;
-         const segIndex = Math.floor(ratio * activeRoute.segments.length);
-         if (activeRoute.segments[segIndex]) {
-             density = activeRoute.segments[segIndex].density;
+         const segIndex = Math.floor(ratio * activeRouteRef.current.segments.length);
+         if (activeRouteRef.current.segments[segIndex]) {
+             density = activeRouteRef.current.segments[segIndex].density;
          }
       }
       

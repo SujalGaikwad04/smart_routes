@@ -17,13 +17,16 @@ WS   /ws/reroute/{session_id}         – real-time reroute WebSocket
 import asyncio
 import json
 import logging
+import pathlib
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from engine.graph_builder import get_graph, get_all_nodes, node_info, CITY_NODES
 from engine.dynamic_routing import get_dynamic_routes
@@ -41,6 +44,7 @@ from services.geocoder import geocode, snap_to_road
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Request / Response schemas
@@ -61,6 +65,8 @@ class OptimizeRouteRequest(BaseModel):
     vehicle_model:  Optional[str]  = Field(None)
     mileage:        Optional[float]= Field(None, description="km/L (auto-looked-up if blank)")
     fuel_type:      Optional[str]  = Field(None, description="petrol | diesel | electric | cng | hybrid")
+    fuel_level:     float = Field(75.0, description="Remaining tank level %")
+    optimize_stops: bool  = Field(False, description="Perform TSP reordering on priority_stops")
     priority_stops: Optional[List[PriorityStopObj]] = Field(default_factory=list, description="Must-visit locations (max 5)")
     mode:           str   = Field("fastest", description="fastest | eco")
     top_k:          int   = Field(50, ge=1, le=100)
@@ -110,16 +116,17 @@ class OptimizeRouteRequest(BaseModel):
 # ──────────────────────────────────────────────────────────────────────────────
 # Vehicle DB lookup
 # ──────────────────────────────────────────────────────────────────────────────
-import pathlib, json as _json
+
 
 _VEHICLE_DB_PATH = pathlib.Path(__file__).parent.parent / "data" / "vehicle_db.json"
+
 _VEHICLE_DB: Dict[str, Any] = {}
 
 def _load_vehicle_db() -> Dict[str, Any]:
     global _VEHICLE_DB
     if not _VEHICLE_DB:
         with open(_VEHICLE_DB_PATH, "r", encoding="utf-8") as f:
-            _VEHICLE_DB = _json.load(f)
+            _VEHICLE_DB = json.load(f)
     return _VEHICLE_DB
 
 
@@ -223,7 +230,8 @@ async def _geocode_priority_stops(stops: List[PriorityStopObj]) -> List[Tuple[fl
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/optimize-route", summary="Generate and rank optimised routes")
-async def optimize_route(req: OptimizeRouteRequest):
+@limiter.limit("5/minute")
+async def optimize_route(request: Request, req: OptimizeRouteRequest):
     t_start = time.perf_counter()
 
     # ── 1. Resolve source / destination coordinates ───────────────────────────
@@ -259,6 +267,7 @@ async def optimize_route(req: OptimizeRouteRequest):
             dlat=d_lat, dlon=d_lon,
             priority_coords=priority_coords,
             top_k=req.top_k,
+            optimize_stops=req.optimize_stops
         )
     except RuntimeError as exc:
         raise HTTPException(
@@ -364,8 +373,8 @@ async def optimize_route(req: OptimizeRouteRequest):
                 "distance_km":        s["distance_km"],
                 "estimated_time_min": s["estimated_time_min"],
                 "fuel_estimate":      s["fuel_estimate"],
-                "path_geometry":      _serialise_route(s).get("path_geometry", []),
-                "segments":           _serialise_route(s).get("segments", []),
+                **{k: v for k, v in _serialise_route(s).items()
+                   if k in {"path_geometry", "segments"}},
             }
             for s in scored
         ],
