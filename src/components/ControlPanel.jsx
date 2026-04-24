@@ -149,6 +149,7 @@ export default function ControlPanel({ onSubmit, loading }) {
     vehicle_model: '', mileage: '', fuel_type: 'petrol', mode: 'fastest',
   })
   const [fuelLevel,        setFuelLevel]        = useState(75)  // 0-100%
+  const [departureTime,    setDepartureTime]    = useState(new Date().getHours()) // 0-23
   const [optimizeStops,    setOptimizeStops]    = useState(false)
   const [priorityStops,    setPriorityStops]    = useState([])  // [{ label, lat, lon }]
   const [stopInput,        setStopInput]        = useState('')
@@ -295,6 +296,7 @@ export default function ControlPanel({ onSubmit, loading }) {
       ...form,
       priority_stops: priorityStops,
       fuel_level: fuelLevel,
+      departure_time: departureTime,
       optimize_stops: optimizeStops,
     })
   }
@@ -541,6 +543,40 @@ export default function ControlPanel({ onSubmit, loading }) {
           <div className="cp-fuel-caution">
             <span className="material-icons-round">warning</span>
             Low fuel — consider refuelling soon
+          </div>
+        )}
+      </div>
+
+      {/* ── Departure Time Slider (Time Machine) ── */}
+      <div className="cp-section">
+        <p className="cp-section-label">
+          Departure Time
+          <span className="cp-fuel-badge" style={{ background: '#4a9ef5', color: '#fff' }}>
+            {`${String(departureTime).padStart(2, '0')}:00`}
+          </span>
+        </p>
+        <div className="cp-fuel-slider-wrap">
+          <input
+            type="range"
+            min="0"
+            max="23"
+            step="1"
+            value={departureTime}
+            onChange={e => setDepartureTime(Number(e.target.value))}
+            className="cp-fuel-slider"
+            style={{ background: `linear-gradient(to right, rgba(74,158,245,0.2) ${departureTime * 4.16}%, #1b263b ${departureTime * 4.16}%)` }}
+          />
+          <div className="cp-fuel-track-labels">
+            <span>12 AM</span>
+            <span>6 AM</span>
+            <span>12 PM</span>
+            <span>6 PM</span>
+          </div>
+        </div>
+        {Number(departureTime) >= 17 && Number(departureTime) <= 20 && (
+          <div className="cp-fuel-warning" style={{ background: 'rgba(255,79,109,0.1)', color: '#ff4f6d' }}>
+            <span className="material-icons-round">traffic</span>
+            Evening Rush Hour — avoiding major highways!
           </div>
         )}
       </div>

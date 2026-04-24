@@ -277,3 +277,59 @@
 .map-style-btn .material-icons-round {
   opacity: 0.85;
 }
+
+/* ── Unified Map Controls Panel (3D toggle + Style switcher) ── */
+.map-controls-panel {
+  position: absolute;
+  bottom: 80px;
+  right: 16px;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(13, 20, 35, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  padding: 6px;
+}
+
+.map-control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: transparent;
+  border: 1.5px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.55);
+  cursor: pointer;
+  transition: all 0.22s ease;
+}
+
+.map-control-btn .material-icons-round {
+  font-size: 20px;
+}
+
+.map-control-btn:hover {
+  background: rgba(34, 212, 114, 0.1);
+  border-color: rgba(34, 212, 114, 0.3);
+  color: rgba(255,255,255,0.9);
+  transform: scale(1.08);
+}
+
+.map-control-btn.active {
+  background: rgba(34, 212, 114, 0.18);
+  border-color: rgba(34, 212, 114, 0.55);
+  color: #22d472;
+  box-shadow: 0 0 12px rgba(34,212,114,0.15);
+}
+
+.map-control-divider {
+  width: 24px;
+  height: 1px;
+  background: rgba(255,255,255,0.1);
+  margin: 2px auto;
+}

@@ -3,6 +3,7 @@ import Map from 'react-map-gl/maplibre'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import DeckGL from '@deck.gl/react'
+import { FlyToInterpolator } from '@deck.gl/core'
 import { PathLayer, ScatterplotLayer, ColumnLayer } from '@deck.gl/layers'
 import { TripsLayer } from '@deck.gl/geo-layers'
 import NavigationHUD from './NavigationHUD'
@@ -184,10 +185,10 @@ export default function MapView({
 }) {
   const hasData = result && result.best_route
 
-  const [viewState,  setViewState]  = useState(INITIAL_VIEW_STATE)
-  const [hoverInfo,  setHoverInfo]  = useState(null)
-  const [is3D,       setIs3D]       = useState(true)
-  const [mapStyleKey, setMapStyleKey] = useState('dark')  // dark | satellite | hybrid
+  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE)
+  const [hoverInfo, setHoverInfo] = useState(null)
+  const [mapStyleKey, setMapStyleKey] = useState('dark')
+  const [is3DMode, setIs3DMode] = useState(true)
 
   // Trip animation time [0..1] looping
   const [tripTime, setTripTime] = useState(0)
@@ -278,7 +279,7 @@ export default function MapView({
     const STAGGER       = 120
     const now = performance.now()
     top4Routes.forEach((r, i) => {
-      animRef.current[r.rank] = { startTs: now + i * STAGGER, duration: DURATION, done: false }
+      animRef.current[r.rank] = { startTs: now + i * STAGGER, duration: ANIM_DURATION, done: false }
     })
 
     let allDone = false
@@ -313,7 +314,8 @@ export default function MapView({
       const vs = boundsToViewState(bounds, viewState.pitch)
       if (vs) setViewState(vs)
     } else {
-  }, [result]) // eslint-disable-line react-hooks/exhaustive-deps
+      const sc = result.source_coords
+      const dc = result.dest_coords
       if (sc?.lat != null && dc?.lat != null) {
         const midLat = (sc.lat + dc.lat) / 2
         const midLon = (sc.lon + dc.lon) / 2
@@ -348,20 +350,6 @@ export default function MapView({
       transitionDuration: 150,
     }))
   }, [isNavigating, userLocation])
-
-  // ── 2D / 3D toggle ────────────────────────────────────────────────────────
-  function toggle3D() {
-    setIs3D(prev => {
-      const next = !prev
-      setViewState(v => ({
-        ...v,
-        pitch:   next ? 60 : 0,
-        bearing: next ? -15 : 0,
-        transitionDuration: 700,
-      }))
-      return next
-    })
-  }
 
   // ── Build Deck.gl layers ───────────────────────────────────────────────────
   const layers = useMemo(() => {
@@ -423,22 +411,21 @@ export default function MapView({
       }))
     }
 
-    // ── LAYER 3: TripsLayer – animated neon light trail on top 4 routes ──────
-    if (top4Routes.length > 0 && !isNavigating) {
+    // ── LAYER 3: TripsLayer – animated neon light trail (3D only) ──────────
+    if (is3DMode && top4Routes.length > 0 && !isNavigating) {
       const tripsData = top4Routes
-        .filter(r => (animProgress[r.rank] ?? 0) >= 0.5)  // only show after route is drawn
-        .map(r => ({
-          ...r,
-          waypoints: buildTripWaypoints(r._path),
-        }))
-        .filter(r => r.waypoints.length >= 2)
+        .filter(r => (animProgress[r.rank] ?? 0) >= 0.5)
+        .filter(r => r._path && r._path.length >= 2)
 
       if (tripsData.length > 0) {
         lys.push(new TripsLayer({
           id:            'trips-glow',
-          data:          tripsData,
-          getPath:       d => d.waypoints.map(w => w.coordinates),
-          getTimestamps: d => d.waypoints.map(w => w.timestamp),
+          data:          tripsData.map(r => ({
+            ...r,
+            timestamps: r._path.map((_, i) => i / (r._path.length - 1)),
+          })),
+          getPath:       d => d._path,
+          getTimestamps: d => d.timestamps,
           getColor:      d => {
             const col = TOP4_COLORS[(d.rank - 1) % TOP4_COLORS.length]
             const isSel = selectedRank == null || d.rank === selectedRank
@@ -446,8 +433,8 @@ export default function MapView({
           },
           currentTime:   tripTime,
           trailLength:   0.18,
-          widthMinPixels: d => d.rank === 1 ? 6 : 4,
-          widthMaxPixels: d => d.rank === 1 ? 10 : 7,
+          widthMinPixels: 6,
+          widthMaxPixels: 10,
           capRounded:    true,
           parameters:    { depthTest: false },
           updateTriggers: {
@@ -472,7 +459,7 @@ export default function MapView({
       }))
     }
 
-    // LAYER 4: GPS user marker (blue dot)
+    // LAYER 4 & 5: GPS user marker (glow ring + solid dot)
     if (userLocation && (isNavigating || !userLocation.isSimulated)) {
       lys.push(new ScatterplotLayer({
         id: 'user-marker-glow',
@@ -490,8 +477,7 @@ export default function MapView({
         getRadius:      16, radiusUnits: 'pixels',
         parameters:     { depthTest: false },
       }))
-    // ── LAYER 5: GPS user marker ─────────────────────────────────────────────
-    if (userLocation && (isNavigating || !userLocation.isSimulated)) {
+      // ── LAYER 5: GPS user marker solid dot ──────────────────────────────────
       lys.push(new ScatterplotLayer({
         id: 'user-marker',
         data: [userLocation],
@@ -502,8 +488,9 @@ export default function MapView({
       }))
     }
 
-    // ── LAYER 6: 3D Column towers at endpoints ───────────────────────────────
+    // ── LAYER 6: Endpoints (3D towers or 2D flat markers) ─────────────────────
     if (!isNavigating && endpoints.length > 0) {
+      // Glow ring (always)
       lys.push(new ScatterplotLayer({
         id:           'endpoint-glow',
         data:         endpoints,
@@ -515,27 +502,29 @@ export default function MapView({
         parameters:   { depthTest: false },
       }))
 
-      // 3D extruded column towers
-      lys.push(new ColumnLayer({
-        id:              'endpoint-towers',
-        data:            endpoints,
-        diskResolution:  32,
-        radius:          35,
-        extruded:        true,
-        pickable:        true,
-        getPosition:     d => d.coords,
-        getFillColor:    d => d.type === 'origin'
-          ? [34, 212, 114, 220]
-          : [255, 79, 109, 220],
-        getLineColor:    [255, 255, 255, 80],
-        getElevation:    d => d.type === 'origin' ? 120 : 100,
-        lineWidthMinPixels: 1,
-        stroked:         true,
-        onHover:         info => setHoverInfo(info),
-        updateTriggers:  {},
-      }))
+      if (is3DMode) {
+        // 3D extruded column towers
+        lys.push(new ColumnLayer({
+          id:              'endpoint-towers',
+          data:            endpoints,
+          diskResolution:  32,
+          radius:          35,
+          extruded:        true,
+          pickable:        true,
+          getPosition:     d => d.coords,
+          getFillColor:    d => d.type === 'origin'
+            ? [34, 212, 114, 220]
+            : [255, 79, 109, 220],
+          getLineColor:    [255, 255, 255, 80],
+          getElevation:    d => d.type === 'origin' ? 120 : 100,
+          lineWidthMinPixels: 1,
+          stroked:         true,
+          onHover:         info => setHoverInfo(info),
+          updateTriggers:  {},
+        }))
+      }
 
-      // Dot cap on top of each tower
+      // Dot marker on top (always shown, bigger in 2D)
       lys.push(new ScatterplotLayer({
         id:               'endpoint-dots',
         data:             endpoints,
@@ -544,7 +533,8 @@ export default function MapView({
         getLineColor:     [255, 255, 255],
         lineWidthMinPixels: 2,
         stroked:          true,
-        radiusMinPixels:  7, radiusMaxPixels: 13,
+        radiusMinPixels:  is3DMode ? 7 : 10,
+        radiusMaxPixels:  is3DMode ? 13 : 18,
         pickable:         true,
         onHover:          info => setHoverInfo(info),
         parameters:       { depthTest: false },
@@ -601,7 +591,39 @@ export default function MapView({
 
     return lys
   }, [bgRoutes, top4Routes, trafficSegments, animProgress, selectedRank, isNavigating,
-      userLocation, endpoints, allRoutes, onSelectRoute, fuelStations, fuelCritical, tripTime])
+      userLocation, endpoints, allRoutes, onSelectRoute, fuelStations, fuelCritical, tripTime, is3DMode])
+
+  // ── 3D Buildings Injection ─────────────────────────────────────────────────
+  const handleMapLoad = useCallback((e) => {
+    const map = e.target
+    if (!map.getLayer('3d-buildings')) {
+      const layers = map.getStyle().layers
+      let labelLayerId
+      for (let i = 0; i < layers.length; i++) {
+        if (layers[i].type === 'symbol' && layers[i].layout && layers[i].layout['text-field']) {
+          labelLayerId = layers[i].id
+          break
+        }
+      }
+      
+      const bldgLayer = layers.find(l => l['source-layer'] === 'building')
+      if (bldgLayer && bldgLayer.source) {
+        map.addLayer({
+          'id': '3d-buildings',
+          'source': bldgLayer.source,
+          'source-layer': 'building',
+          'type': 'fill-extrusion',
+          'minzoom': 13,
+          'paint': {
+            'fill-extrusion-color': '#333333',
+            'fill-extrusion-height': ['*', ['get', 'render_height'], 1.5],
+            'fill-extrusion-base': ['get', 'render_min_height'],
+            'fill-extrusion-opacity': 0.8
+          }
+        }, labelLayerId)
+      }
+    }
+  }, [])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -613,7 +635,12 @@ export default function MapView({
         controller={true}
         getCursor={({ isHovering }) => isHovering ? 'pointer' : 'grab'}
       >
-        <Map reuseMaps mapStyle={MAP_STYLES[mapStyleKey].style} mapLib={maplibregl} />
+        <Map 
+          reuseMaps 
+          mapStyle={MAP_STYLES[mapStyleKey].style} 
+          mapLib={maplibregl} 
+          onLoad={handleMapLoad}
+        />
 
 
         {hoverInfo?.object && !isNavigating && (
@@ -700,8 +727,8 @@ export default function MapView({
           {isNavigating
             ? 'Live Traffic & GPS'
             : hasData
-              ? `${result.routes_evaluated || allRoutes.length} paths · 3D WebGL`
-              : 'AI Map Engine – 3D View'}
+              ? `${result.routes_evaluated || allRoutes.length} paths · ${is3DMode ? '3D' : '2D'} WebGL`
+              : `AI Map Engine – ${is3DMode ? '3D' : '2D'} View`}
         </span>
       </div>
 
@@ -724,6 +751,38 @@ export default function MapView({
           <p style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: 4 }}>Real-world roads · 50 routes · AI ranked · 3D map</p>
         </div>
       )}
+
+      {/* ── Map Controls (3D & Style) ── */}
+      <div className="map-controls-panel">
+        <button 
+          className={`map-control-btn ${is3DMode ? 'active' : ''}`}
+          onClick={() => {
+            const newIs3D = !is3DMode
+            setIs3DMode(newIs3D)
+            setViewState(v => ({
+              ...v,
+              pitch: newIs3D ? 60 : 0,
+              bearing: newIs3D ? -15 : 0,
+              transitionDuration: 1000,
+              transitionInterpolator: new FlyToInterpolator()
+            }))
+          }}
+          title="Toggle 3D View"
+        >
+          <span className="material-icons-round">{is3DMode ? '3d_rotation' : 'map'}</span>
+        </button>
+        <div className="map-control-divider" />
+        {Object.entries(MAP_STYLES).map(([k, style]) => (
+          <button
+            key={k}
+            className={`map-control-btn ${mapStyleKey === k ? 'active' : ''}`}
+            onClick={() => setMapStyleKey(k)}
+            title={style.label}
+          >
+            <span className="material-icons-round">{style.icon}</span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

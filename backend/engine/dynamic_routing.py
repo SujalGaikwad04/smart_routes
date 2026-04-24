@@ -23,6 +23,8 @@ import time
 from typing import List, Dict, Tuple, Optional
 
 import httpx
+from cachetools import TTLCache
+from engine.graph_builder import CITY_NODES
 
 logger = logging.getLogger("dynamic_routing")
 
